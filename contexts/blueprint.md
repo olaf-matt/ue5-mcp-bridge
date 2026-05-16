@@ -151,12 +151,63 @@ Auto-compiles the Blueprint after changes.
 | `remove_variable` | Remove member variable | `blueprint_path`, `variable_name` |
 | `add_function` | Create new function graph | `blueprint_path`, `function_name` |
 | `remove_function` | Remove function graph | `blueprint_path`, `function_name` |
-| `add_node` | Add a single node to a graph | `blueprint_path`, `node_type`, `node_params`, `pos_x`, `pos_y` |
-| `add_nodes` | Batch add nodes with connections | `blueprint_path`, `nodes[]`, `connections[]` |
-| `delete_node` | Remove a node from a graph | `blueprint_path`, `node_id` |
-| `connect_pins` | Wire two pins together | `blueprint_path`, `source_node_id`, `source_pin`, `target_node_id`, `target_pin` |
-| `disconnect_pins` | Break pin connection | `blueprint_path`, `source_node_id`, `source_pin`, `target_node_id`, `target_pin` |
-| `set_pin_value` | Set default value for input pin | `blueprint_path`, `node_id`, `pin_name`, `pin_value` |
+| `add_node` | Add a single node to a graph | `blueprint_path`, `node_type`, `node_params`, `pos_x`, `pos_y`, `graph_name`, `is_function_graph` |
+| `add_nodes` | Batch add nodes with connections | `blueprint_path`, `nodes[]`, `connections[]`, `graph_name`, `is_function_graph` |
+| `delete_node` | Remove a node from a graph | `blueprint_path`, `node_id`, `graph_name`, `is_function_graph` |
+| `connect_pins` | Wire two pins together | `blueprint_path`, `source_node_id`, `source_pin`, `target_node_id`, `target_pin`, `graph_name`, `is_function_graph` |
+| `disconnect_pins` | Break pin connection | `blueprint_path`, `source_node_id`, `source_pin`, `target_node_id`, `target_pin`, `graph_name`, `is_function_graph` |
+| `set_pin_value` | Set default value for input pin | `blueprint_path`, `node_id`, `pin_name`, `pin_value`, `graph_name`, `is_function_graph` |
+
+#### Targeting function graphs
+
+All node operations (`add_node`, `add_nodes`, `delete_node`, `connect_pins`, `disconnect_pins`, `set_pin_value`) support two optional params that route to any graph in the Blueprint:
+
+- `graph_name` (string) — the exact name of the graph (e.g. `"SetWeatherState"`, `"UpdateFog"`, `"EventGraph"`)
+- `is_function_graph` (bool) — `true` to search `FunctionGraphs`, `false` (default) to search `UbergraphPages` (EventGraph)
+
+When omitted, defaults to the first EventGraph (same as before).
+
+```json
+// Add a node inside the SetWeatherState function graph
+{
+  "domain": "blueprint",
+  "operation": "add_node",
+  "params": {
+    "blueprint_path": "/Game/BP_WeatherSystem",
+    "node_type": "CallFunction",
+    "graph_name": "SetWeatherState",
+    "is_function_graph": true,
+    "node_params": { "function": "UpdateFog" },
+    "pos_x": 600,
+    "pos_y": 0
+  }
+}
+```
+
+#### Calling Blueprint's own functions (self-call)
+
+`CallFunction` nodes can call user-defined functions on the same Blueprint without specifying `target_class`. The tool searches (in order):
+1. `KismetSystemLibrary` — Print String, Line Trace, etc.
+2. `KismetMathLibrary` — math operations
+3. `GameplayStatics` — Get All Actors Of Class, etc.
+4. **Blueprint's own function graphs** (self-call via `FunctionReference.SetSelfMember`)
+5. Blueprint's generated class (inherited compiled functions)
+
+```json
+// Call UpdateFog (defined on the same Blueprint) — no target_class needed
+{ "node_type": "CallFunction", "node_params": { "function": "UpdateFog" } }
+
+// Call GetAllActorsOfClass from GameplayStatics
+{ "node_type": "CallFunction", "node_params": { "function": "GetAllActorsOfClass", "target_class": "GameplayStatics" } }
+```
+
+#### Node IDs accepted by modify operations
+
+`connect_pins`, `delete_node`, and `set_pin_value` accept two forms of `node_id`:
+- **MCP-generated ID** — returned by `add_node`/`add_nodes` (e.g. `"CallFunction_UpdateFog_42"`)
+- **Node GUID** — returned by `blueprint_query` `get_graph` operation (e.g. `"A1B2C3D4-..."`)
+
+Always prefer using the GUID from `blueprint_query` when wiring connections to pre-existing nodes.
 
 ### Query operations (→ `blueprint_query`)
 
