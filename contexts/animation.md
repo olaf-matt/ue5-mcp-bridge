@@ -90,13 +90,13 @@ UK2Node_VariableGet            // Get blueprint variables
 ```
 
 ### Comparison Functions (KismetMathLibrary)
-- `Greater_FloatFloat`, `Less_FloatFloat`, `GreaterEqual_FloatFloat`
+- `Greater_DoubleDouble`, `Less_DoubleDouble`, `GreaterEqual_DoubleDouble` (UE5: float→double)
 - `Greater_IntInt`, `Less_IntInt` - for integer comparisons
 - `EqualEqual_BoolBool`, `NotEqual_BoolBool` - for bool comparisons
 
 ### Pin Type Detection
 When connecting variable pins to comparison nodes, ensure type matching:
-- **PC_Real** (float/double) → Use `*_FloatFloat` or `*_DoubleDouble`
+- **PC_Real** (float/double) → Use `*_DoubleDouble` (UE5 renamed all float ops)
 - **PC_Int** → Use `*_IntInt`
 - **PC_Boolean** → Use `*_BoolBool`
 

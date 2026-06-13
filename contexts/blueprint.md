@@ -218,6 +218,72 @@ Read-only. Use `list` first to discover Blueprints, then `inspect` or `get_graph
 | `list` | Find Blueprints with optional filters | `path_filter`, `type_filter`, `name_filter`, `limit` |
 | `inspect` | Get detailed Blueprint info (variables, functions, parent class) | `blueprint_path`, `include_variables`, `include_functions`, `include_graphs` |
 | `get_graph` | Get graph structure (node count, events, graph names) | `blueprint_path` |
+| `get_nodes` | All nodes in a graph with their IDs | `blueprint_path`, `graph_name` |
+| `get_node_pins` | Exact pin names + connections for one node | `blueprint_path`, `node_id` |
+| `search_nodes` | Find nodes by title/class substring | `blueprint_path`, `query` |
+
+## MCP Gotchas (blueprint domain)
+
+Operational traps when driving `blueprint_modify` / `blueprint_transaction` through the router.
+For what is **not possible** (capability limits), see the `gaps` context.
+
+### Parameter names — a wrong name fails silently
+- `create`: `blueprint_name` + `package_path` (NOT `asset_name` / `blueprint_path`).
+- `add_variable`: `variable_name` + `variable_type` (NOT `var_name` / `var_type`).
+- `add_function`: `function_name`. (Function inputs are a separate `add_function_input` call, and
+  only stick on **interface** Blueprints — see `gaps`.)
+- `set_property` (actor op, not a blueprint op): `property` + `value`, no `_name` suffix.
+
+### `node_params` inner keys drop the `_name` suffix
+Top-level ops use `variable_name` / `function_name`, but inside `node_params` the keys are bare:
+```json
+{ "node_type": "CallFunction", "node_params": { "function": "MyFunc" } }
+{ "node_type": "VariableGet",  "node_params": { "variable": "MyVar" } }
+{ "node_type": "Event",        "node_params": { "event": "BeginPlay" } }
+```
+Do NOT use `function_name` / `variable_name` / `event_name` inside `node_params`.
+
+### `connect_pins` vs `add_nodes` connections — different key names
+- `connect_pins` (standalone op): `source_node_id` / `target_node_id` / `source_pin` / `target_pin`.
+- `add_nodes` `connections[]`: `from_node` / `to_node` / `from_pin` / `to_pin`.
+
+Using `source_node` / `target_node` (without `_id`) in `connect_pins` is silently ignored.
+
+### `add_nodes` local id references
+Give each node spec an `"id"` and reference those ids in `connections`:
+```json
+{ "nodes": [
+    { "id": "b1",   "type": "Branch",      "pos_x": 300 },
+    { "id": "vget", "type": "VariableGet", "variable": "bActive", "pos_x": 100 } ],
+  "connections": [
+    { "from_node": "<event_guid>", "from_pin": "then",    "to_node": "b1", "to_pin": "execute" },
+    { "from_node": "vget",         "from_pin": "bActive", "to_node": "b1", "to_pin": "Condition" } ] }
+```
+Numeric indices (0,1,2…) reference newly-created nodes; real GUID strings reference pre-existing nodes.
+
+### Prefer `blueprint_transaction` for multi-node wiring
+Run a full op-script server-side and compile once, instead of many sequential `connect_pins`:
+```json
+{ "blueprint_path": "/Game/Blueprints/BP_Example",
+  "pre_existing_refs": { "begin_play": "<EventBeginPlay GUID>" },
+  "ops": [
+    { "op": "add_node", "ref": "b1", "node_type": "Branch", "pos_x": 300 },
+    { "op": "connect_pins", "from_ref": "begin_play", "from_pin": "then", "to_ref": "b1", "to_pin": "execute" } ] }
+```
+Workflow: `blueprint_query get_nodes` / `get_graph` once to get event GUIDs → plan ops → one transaction.
+
+### Branch pin names
+Branch outputs are `then` (true) and `else` (false) — never `True`/`False`. Inputs: `execute`, `Condition`.
+
+### Verify before and after
+- Before wiring, `blueprint_query get_node_pins` on a node to confirm exact pin names — don't guess them.
+- After structural edits the modify ops auto-compile; check the returned `compile_status` and the
+  output log for errors.
+
+For limitations — parameters can't be added to regular (non-interface) function graphs,
+`BlueprintPure` instance methods not resolvable via `target_class`, SCS component `VariableGet`,
+`add_variable` `category` ignored, and the object-ref types that *are* supported — pull
+`unreal_get_ue_context { category: "gaps" }`.
 
 ## Compilation
 

@@ -134,10 +134,12 @@ Material instance creation and parameter management.
 | Operation | Description | Required Params |
 |-----------|-------------|-----------------|
 | `create_material_instance` | Create new MaterialInstanceConstant | asset_name, parent_material |
-| `set_material_parameters` | Set parameters on existing instance | material_instance_path, parameters |
+| `set_material_parameters` | Set params on an instance (override) OR a base material (defaults, recompiles+saves) | material_path, parameters |
 | `set_skeletal_mesh_material` | Assign material to skeletal mesh slot | skeletal_mesh_path, material_path |
 | `set_actor_material` | Assign material to an actor's mesh component | actor_name, material_path |
 | `get_material_info` | Get material details and parameters | asset_path |
+| `set_expression_value` | Edit a constant node (Constant/Constant2/3/4Vector) on a base material by node_id | material_path, node_id, value |
+| `repair_expression_ids` | Force colliding node ids (MaterialExpressionGuids) unique | material_path |
 
 ### Example Usage
 
@@ -162,10 +164,10 @@ Material instance creation and parameter management.
   }
 }
 
-// Update parameters on existing material instance
+// Update parameters on existing material instance (override)
 {
   "operation": "set_material_parameters",
-  "material_instance_path": "/Game/Materials/Characters/MI_Character_Red",
+  "material_path": "/Game/Materials/Characters/MI_Character_Red",
   "parameters": {
     "scalars": {
       "Roughness": 0.6
@@ -174,6 +176,38 @@ Material instance creation and parameter management.
       "EmissiveColor": {"r": 0, "g": 1, "b": 0, "a": 1}
     }
   }
+}
+
+// Set parameter DEFAULTS on a BASE UMaterial (material_path = a base material, not an instance).
+// Sets the default on the parameter expression nodes, recompiles, and SAVES. Affects ALL instances.
+// Names must already exist as parameters (use get_material_info to list them). Also accepts
+// "static_switches": {"Name": true}. Wrong type or unknown name → hard error (no silent no-op).
+{
+  "operation": "set_material_parameters",
+  "material_path": "/Game/Materials/M_Character_Base",
+  "parameters": {
+    "scalars": { "FoamTextureSize": 999 },
+    "vectors": { "CascadeSizes": {"r": 1, "g": 2, "b": 3, "a": 4} },
+    "static_switches": { "UseDetailNormal": true }
+  }
+}
+
+// Edit a CONSTANT expression node on a base material (Phase 2b). node_id is the 'id' GUID from
+// get_material_info's connected_inputs tree. value = number for Constant, {r,g,b,a} for the vector
+// constants. Recompiles + saves. For PARAMETER nodes use set_material_parameters (by name) instead.
+{
+  "operation": "set_expression_value",
+  "material_path": "/Game/OceanWater/Materials/M_PreviewOceanWater",
+  "node_id": "8D070E4C442EBD3CDE2584BDC4CFDC49",
+  "value": {"r": 0.05, "g": 0.12, "b": 0.16}
+}
+
+// Node ids come from MaterialExpressionGuid, which can COLLIDE between distinct nodes (copy-paste
+// artifact). get_material_info reports has_duplicate_node_ids:true and set_expression_value REFUSES
+// an ambiguous id. Fix by making every node id unique, then re-read:
+{
+  "operation": "repair_expression_ids",
+  "material_path": "/Game/OceanWater/Materials/M_PreviewOceanWater"
 }
 
 // Set material on skeletal mesh slot
@@ -220,25 +254,46 @@ Material instance creation and parameter management.
   "new_material": "MI_Character_Red"
 }
 
-// get_material_info response
+// get_material_info response — full introspection for BASE materials AND instances
 {
   "name": "MI_Character_Red",
   "path": "/Game/Materials/Characters/MI_Character_Red",
   "class": "MaterialInstanceConstant",
   "is_instance": true,
   "parent": "/Game/Materials/M_Character_Base",
-  "scalar_parameters": {
-    "Roughness": 0.4,
-    "Metallic": 0.0
+
+  // Rendering properties (resolved through instances too)
+  "blend_mode": "Opaque",                 // Opaque|Masked|Translucent|Additive|Modulate|AlphaComposite|...
+  "shading_models": ["DefaultLit"],       // array — e.g. ["SingleLayerWater"], ["Unlit"]
+  "two_sided": false,
+  "material_domain": "Surface",           // Surface|DeferredDecal|LightFunction|Volume|PostProcess|UI|...
+  "usage_flags": ["StaticMesh"],          // only the enabled MATUSAGE_* flags (prefix stripped)
+  "use_material_attributes": false,
+
+  // Parameters: DEFAULTS for a base UMaterial, OVERRIDES for an instance
+  "scalar_parameters": { "Roughness": 0.4, "Metallic": 0.0 },
+  "vector_parameters": { "BaseColor": {"r": 1.0, "g": 0.2, "b": 0.1, "a": 1.0} },
+  "texture_parameters": { "Normal": "/Game/Textures/T_Character_Normal" },
+  "static_switch_parameters": { "UseDetailNormal": true },
+
+  // Graph introspection (BASE materials only — depth-bounded ~3). Answers "what drives this output."
+  "connected_inputs": {
+    "BaseColor": { "class": "MaterialExpressionConstant3Vector", "caption": "0.8,0.2,0.1",
+                   "inputs": { /* nested expressions w/ class, caption, parameter name */ } }
+    // ...Metallic, Specular, Roughness, Normal, EmissiveColor, Opacity, Refraction, WorldPositionOffset, ...
   },
-  "vector_parameters": {
-    "BaseColor": {"r": 1.0, "g": 0.2, "b": 0.1, "a": 1.0}
-  },
-  "texture_parameters": {
-    "Normal": "/Game/Textures/T_Character_Normal"
-  }
+  // Custom-output nodes (only present if any) — Single Layer Water scatter/absorption lives here
+  "custom_outputs": [
+    { "class": "MaterialExpressionSingleLayerWaterMaterialOutput",
+      "name": "SingleLayerWaterMaterial",
+      "inputs": { "ScatteringCoefficients": { /* expr tree */ }, "AbsorptionCoefficients": { /* expr tree */ } } }
+  ]
 }
 ```
+
+**Reading water/scatter materials:** a node like `MF_Scattering` driving `EmissiveColor` with a dark
+`DeepColor` constant is a common cause of "goes black with depth" on an *opaque DefaultLit* surface —
+don't assume Single Layer Water just because it's water. Check `shading_models` + `connected_inputs`.
 
 ## Skeletal Mesh Materials
 
