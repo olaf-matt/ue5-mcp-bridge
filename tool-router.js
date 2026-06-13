@@ -2,7 +2,7 @@
  * Tool Router for UE5 MCP Bridge
  *
  * Classifies tools into three layers:
- * - Simple: pass through from Unreal unchanged (12 tools)
+ * - Simple: pass through from Unreal unchanged (13 tools)
  * - Hidden: callable but never listed (9 tools)
  * - Mega: collapsed into unreal_ue router (7 tools)
  *
@@ -23,6 +23,11 @@ export const SIMPLE_TOOL_NAMES = new Set([
   "capture_viewport",
   "get_output_log",
   "blueprint_query",
+  "niagara_query",
+  "niagara_modify",
+  "set_niagara_variable",
+  "sample_render_target_2d_array",
+  "blueprint_transaction",
 ]);
 
 // Hidden tools: callable but never listed

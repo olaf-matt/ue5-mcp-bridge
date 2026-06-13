@@ -62,7 +62,7 @@ const CONFIG = {
 
 // Bind CONFIG values to library functions for convenience
 const fetchUnrealTools = () => _fetchUnrealTools(CONFIG.unrealMcpUrl, CONFIG.requestTimeoutMs);
-const executeUnrealTool = (toolName, args) => _executeUnrealTool(CONFIG.unrealMcpUrl, CONFIG.requestTimeoutMs, toolName, args);
+const executeUnrealTool = (toolName, args, meta = {}) => _executeUnrealTool(CONFIG.unrealMcpUrl, CONFIG.requestTimeoutMs, toolName, args, meta);
 const checkUnrealConnection = () => _checkUnrealConnection(CONFIG.unrealMcpUrl, CONFIG.requestTimeoutMs);
 const formatToolResponse = (toolName, result) =>
   _formatToolResponse(toolName, result, CONFIG.injectContext ? getContextForTool : null);
@@ -320,6 +320,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     const unrealArgs = { operation, ...(routerParams || {}) };
+    const routerMeta = { domain, operation };
 
     log.info("Router dispatch", { domain, operation, targetTool });
 
@@ -340,10 +341,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         CONFIG.requestTimeoutMs,
         targetTool,
         unrealArgs,
-        { onProgress, pollIntervalMs: CONFIG.pollIntervalMs, asyncTimeoutMs: CONFIG.asyncTimeoutMs }
+        { onProgress, pollIntervalMs: CONFIG.pollIntervalMs, asyncTimeoutMs: CONFIG.asyncTimeoutMs, meta: routerMeta }
       );
     } else {
-      result = await executeUnrealTool(targetTool, unrealArgs);
+      result = await executeUnrealTool(targetTool, unrealArgs, routerMeta);
     }
 
     return formatToolResponse(targetTool, result);

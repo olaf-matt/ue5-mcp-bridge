@@ -6,6 +6,8 @@
  * now accept those values as explicit parameters.
  */
 
+import { appendFileSync } from "fs";
+
 /**
  * Structured logging helper - writes to stderr to not interfere with MCP protocol
  */
@@ -14,6 +16,36 @@ export const log = {
   error: (msg, data) => console.error(`[ERROR] ${msg}`, data ? JSON.stringify(data) : ""),
   debug: (msg, data) => process.env.DEBUG && console.error(`[DEBUG] ${msg}`, data ? JSON.stringify(data) : ""),
 };
+
+// File-based telemetry log. Set MCP_LOG_FILE env var to enable.
+const MCP_LOG_FILE = process.env.MCP_LOG_FILE || null;
+
+function logToolCall(record) {
+  if (!MCP_LOG_FILE) return;
+  try {
+    appendFileSync(MCP_LOG_FILE, JSON.stringify(record) + "\n", "utf8");
+  } catch (_) {}
+}
+
+function makeRecord(toolName, mode, startMs, inputChars, result, meta) {
+  const outputStr = JSON.stringify(result);
+  // For async tools the actual message is nested in result.data.message
+  const summary = result.message || result.data?.message;
+  return {
+    ts: new Date().toISOString(),
+    tool: toolName,
+    mode,
+    duration_ms: Date.now() - startMs,
+    success: result.success ?? false,
+    input_chars: inputChars,
+    output_chars: outputStr.length,
+    approx_tokens_in: Math.ceil(inputChars / 4),
+    approx_tokens_out: Math.ceil(outputStr.length / 4),
+    summary: summary?.slice(0, 200),
+    error: result.success ? undefined : result.message?.slice(0, 200),
+    ...meta,
+  };
+}
 
 /**
  * Fetch with timeout using AbortController
@@ -65,8 +97,11 @@ export async function fetchUnrealTools(baseUrl, timeoutMs) {
  * @param {number} timeoutMs - request timeout in milliseconds
  * @param {string} toolName - name of the tool to execute
  * @param {object} args - tool arguments
+ * @param {object} meta - extra fields merged into the telemetry record (e.g. domain, operation)
  */
-export async function executeUnrealTool(baseUrl, timeoutMs, toolName, args) {
+export async function executeUnrealTool(baseUrl, timeoutMs, toolName, args, meta = {}) {
+  const startMs = Date.now();
+  const inputChars = JSON.stringify(args || {}).length;
   const url = `${baseUrl}/mcp/tool/${toolName}`;
   try {
     const response = await fetchWithTimeout(url, {
@@ -79,16 +114,16 @@ export async function executeUnrealTool(baseUrl, timeoutMs, toolName, args) {
 
     const data = await response.json();
     log.debug("Tool executed", { tool: toolName, success: data.success });
+    logToolCall(makeRecord(toolName, "sync", startMs, inputChars, data, meta));
     return data;
   } catch (error) {
     const errorMessage = error.name === "AbortError"
       ? `Request timeout after ${timeoutMs}ms`
       : error.message;
     log.error("Tool execution failed", { tool: toolName, error: errorMessage });
-    return {
-      success: false,
-      message: `Failed to execute tool: ${errorMessage}`,
-    };
+    const result = { success: false, message: `Failed to execute tool: ${errorMessage}` };
+    logToolCall(makeRecord(toolName, "sync", startMs, inputChars, result, meta));
+    return result;
   }
 }
 
@@ -179,7 +214,16 @@ export async function executeUnrealToolAsync(baseUrl, timeoutMs, toolName, args,
     onProgress,
     pollIntervalMs = 2000,
     asyncTimeoutMs = 300000,
+    meta = {},
   } = options;
+
+  const startMs = Date.now();
+  const inputChars = JSON.stringify(args || {}).length;
+
+  function writeAsyncLog(result) {
+    logToolCall(makeRecord(toolName, "async", startMs, inputChars, result, meta));
+    return result;
+  }
 
   // Step 1: Submit task
   let taskId;
@@ -197,13 +241,13 @@ export async function executeUnrealToolAsync(baseUrl, timeoutMs, toolName, args,
     const submitData = await submitResponse.json();
     if (!submitData.success || !submitData.data?.task_id) {
       log.debug("task_submit failed or no task_id, falling back to sync", { tool: toolName });
-      return executeUnrealTool(baseUrl, timeoutMs, toolName, args);
+      return executeUnrealTool(baseUrl, timeoutMs, toolName, args, meta); // sync path logs itself
     }
     taskId = submitData.data.task_id;
     log.debug("Task submitted", { tool: toolName, taskId });
   } catch (error) {
     log.debug("task_submit error, falling back to sync", { tool: toolName, error: error.message });
-    return executeUnrealTool(baseUrl, timeoutMs, toolName, args);
+    return executeUnrealTool(baseUrl, timeoutMs, toolName, args, meta); // sync path logs itself
   }
 
   // Step 2: Poll for completion
@@ -248,22 +292,22 @@ export async function executeUnrealToolAsync(baseUrl, timeoutMs, toolName, args,
         }, timeoutMs);
         const resultData = await resultResponse.json();
         log.debug("Task completed", { tool: toolName, taskId, status: taskStatus });
-        return resultData;
+        return writeAsyncLog(resultData);
       } catch (error) {
         log.error("task_result fetch failed", { taskId, error: error.message });
-        return {
+        return writeAsyncLog({
           success: false,
           message: `Task ${taskStatus} but failed to retrieve result: ${error.message}`,
-        };
+        });
       }
     }
   }
 
   // Async timeout exceeded
-  return {
+  return writeAsyncLog({
     success: false,
     message: `Task timed out after ${asyncTimeoutMs}ms (task_id: ${taskId})`,
-  };
+  });
 }
 
 /**
