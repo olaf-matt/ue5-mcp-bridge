@@ -28,6 +28,7 @@ export const SIMPLE_TOOL_NAMES = new Set([
   "set_niagara_variable",
   "sample_render_target_2d_array",
   "blueprint_transaction",
+  "widget",
 ]);
 
 // Hidden tools: callable but never listed
